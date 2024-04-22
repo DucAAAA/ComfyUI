@@ -23,6 +23,8 @@ import mimetypes
 from comfy.cli_args import args
 import comfy.utils
 import comfy.model_management
+import time
+import base64
 
 from app.user_manager import UserManager
 
@@ -483,6 +485,83 @@ class PromptServer():
                     return web.json_response({"error": valid[1], "node_errors": valid[3]}, status=400)
             else:
                 return web.json_response({"error": "no prompt", "node_errors": []}, status=400)
+            
+        
+        @routes.post("/generate")
+        async def generate(request):
+            logging.info("got prompt")
+            resp_code = 200
+            out_string = ""
+            json_data =  await request.json()
+            json_data = self.trigger_on_prompt(json_data)
+
+            if "number" in json_data:
+                number = float(json_data['number'])
+            else:
+                number = self.number
+                if "front" in json_data:
+                    if json_data['front']:
+                        number = -number
+
+                self.number += 1
+
+            if "prompt" in json_data:
+                prompt = json_data["prompt"]
+                valid = execution.validate_prompt(prompt)
+                extra_data = {}
+                if "extra_data" in json_data:
+                    extra_data = json_data["extra_data"]
+
+                if "client_id" in json_data:
+                    extra_data["client_id"] = json_data["client_id"]
+                if valid[0]:
+                    prompt_id = str(uuid.uuid4())
+                    outputs_to_execute = valid[2]
+                    self.prompt_queue.put((number, prompt_id, prompt, extra_data, outputs_to_execute))
+                    response = {"prompt_id": prompt_id, "number": number, "node_errors": valid[3]}
+                    start_time = time.time()
+                    images = []
+                    batch_size = 1
+                    for layer_key, layer_config in prompt.items():
+                        class_type = layer_config.get("class_type")
+                        if class_type == "RepeatLatentBatch":
+                            batch_size = layer_config["inputs"]["amount"]
+                            break
+                        if class_type == "Efficient Loader" or class_type == "EmptyLatentImage":
+                            batch_size = layer_config["inputs"]["batch_size"]
+                            break
+                    response["images"] = []
+                    while True:
+                        images = glob.glob(os.path.join(folder_paths.get_output_directory(), json_data["client_id"] + "*.png"))
+                        if len(images) == batch_size:
+                            response["status"] = "COMPLETED"
+                            response["images"] = images
+                            break
+                        time.sleep(1)
+                        if time.time() - start_time > 60:
+                            try:
+                                response["status"] = "FAILED"
+                                response["error"] = "Process interrupted."
+                                nodes.interrupt_processing()
+                            except Exception as e:
+                                pass
+                            break
+                    for image in response["images"]:
+                        if os.path.exists(image):
+                            image_file = open(image, "rb")
+                            base64_image = base64.b64encode(image_file.read()).decode("utf-8")
+                            response["images"].append({
+                                "name": os.path.basename(image),
+                                "data": base64_image
+                            })
+                            os.remove(image)
+                    return web.json_response(response)
+                else:
+                    logging.warning("invalid prompt: {}".format(valid[1]))
+                    return web.json_response({"error": valid[1], "node_errors": valid[3]}, status=400)
+            else:
+                return web.json_response({"error": "no prompt", "node_errors": []}, status=400)
+
 
         @routes.post("/queue")
         async def post_queue(request):
