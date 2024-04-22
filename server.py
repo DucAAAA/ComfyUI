@@ -546,7 +546,9 @@ class PromptServer():
                             except Exception as e:
                                 pass
                             break
+                    print(response)
                     for image in response["images"]:
+                        print(image)
                         if os.path.exists(image):
                             image_file = open(image, "rb")
                             base64_image = base64.b64encode(image_file.read()).decode("utf-8")
