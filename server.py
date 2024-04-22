@@ -27,6 +27,7 @@ import time
 import base64
 
 from app.user_manager import UserManager
+from s3_client import upload_file
 
 class BinaryEventTypes:
     PREVIEW_IMAGE = 1
@@ -531,11 +532,11 @@ class PromptServer():
                             batch_size = layer_config["inputs"]["batch_size"]
                             break
                     response["images"] = []
+                    images = []
                     while True:
                         images = glob.glob(os.path.join(folder_paths.get_output_directory(), json_data["client_id"] + "*.png"))
                         if len(images) == batch_size:
                             response["status"] = "COMPLETED"
-                            response["images"] = images
                             break
                         time.sleep(1)
                         if time.time() - start_time > 60:
@@ -546,17 +547,20 @@ class PromptServer():
                             except Exception as e:
                                 pass
                             break
-                    print(response)
-                    for image in response["images"]:
-                        print(image)
-                        if os.path.exists(image):
-                            image_file = open(image, "rb")
-                            base64_image = base64.b64encode(image_file.read()).decode("utf-8")
-                            response["images"].append({
-                                "name": os.path.basename(image),
-                                "data": base64_image
-                            })
-                            os.remove(image)
+                    for image in images:
+                        storage_key = os.path.join(json_data["s3_storage"]["key"], os.path.basename(image))
+                        upload_file(
+                            image,
+                            json_data["s3_storage"]["bucket"],
+                            storage_key
+                        )
+                        response["images"].append({
+                            "url": os.path.join(
+                                "https://" + json_data["s3_storage"]["bucket"] + ".nyc3.cdn.digitaloceanspaces.com",
+                                storage_key
+                            )
+                        })
+                        os.remove(image)
                     return web.json_response(response)
                 else:
                     logging.warning("invalid prompt: {}".format(valid[1]))
