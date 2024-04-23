@@ -214,12 +214,7 @@ class TaggedCache:
             try:
                 from cachetools import LRUCache
 
-                default_size = 20
-                if 'ckpt' in tag:
-                    default_size = 5
-                elif tag in ['latent', 'image']:
-                    default_size = 100
-
+                default_size = 100
                 self._data[tag] = LRUCache(maxsize=self._tag_settings.get(tag, default_size))
 
             except (ImportError, ModuleNotFoundError):
